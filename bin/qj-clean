@@ -1,0 +1,42 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+PROJECT="${1:-}"
+
+if [[ -z "$PROJECT" ]]; then
+  echo "Usage: qj-clean <project>"
+  exit 1
+fi
+
+REPO="$HOME/ai-projects/$PROJECT"
+CODEX_WT="$HOME/ai-work/$PROJECT-codex"
+CLAUDE_WT="$HOME/ai-work/$PROJECT-claude"
+
+cd "$REPO"
+
+echo "Main repo status:"
+git status
+echo
+
+read -rp "Remove Codex worktree and branch? [y/N] " ans
+if [[ "$ans" =~ ^[Yy]$ ]]; then
+  git worktree remove --force "$CODEX_WT" 2>/dev/null || true
+  git branch -D "qj/codex-$PROJECT" 2>/dev/null || true
+fi
+
+read -rp "Remove Claude worktree and branch? [y/N] " ans
+if [[ "$ans" =~ ^[Yy]$ ]]; then
+  git worktree remove --force "$CLAUDE_WT" 2>/dev/null || true
+  git branch -D "qj/claude-$PROJECT" 2>/dev/null || true
+fi
+
+if tmux has-session -t qj-desk 2>/dev/null; then
+  if tmux list-windows -t qj-desk -F "#{window_name}" | grep -qx "$PROJECT"; then
+    read -rp "Kill qj-desk window '$PROJECT'? [y/N] " ans
+    if [[ "$ans" =~ ^[Yy]$ ]]; then
+      tmux kill-window -t "qj-desk:$PROJECT"
+    fi
+  fi
+fi
+
+echo "Done."

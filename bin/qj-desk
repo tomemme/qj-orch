@@ -1,0 +1,44 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ORCH_DIR="$HOME/qj-orch"
+NOTEBOOK="$ORCH_DIR/notebook.md"
+SESSION="qj-desk"
+
+mkdir -p "$ORCH_DIR"
+
+if [[ ! -f "$NOTEBOOK" ]]; then
+  cat > "$NOTEBOOK" <<'EOF'
+# QJ Desk Notebook
+
+## Active Maps
+<!-- Wayfinder maps in progress -->
+
+## Active Sessions
+
+## Ideas
+
+## Decisions
+
+## Follow-ups
+
+## Done Today
+EOF
+fi
+
+if tmux has-session -t "$SESSION" 2>/dev/null; then
+  tmux attach -t "$SESSION"
+  exit 0
+fi
+
+PANE_NOTES=$(tmux new-session -d -s "$SESSION" -n "notebook" -c "$ORCH_DIR" -P -F "#{pane_id}")
+tmux send-keys -t "$PANE_NOTES" "nvim -c 'autocmd FocusLost,BufLeave,CursorHold,InsertLeave <buffer> silent! write' '$NOTEBOOK'" C-m
+
+PANE_STATUS=$(tmux split-window -h -t "$PANE_NOTES" -c "$ORCH_DIR" -P -F "#{pane_id}")
+tmux send-keys -t "$PANE_STATUS" "clear && echo 'QJ Desk Status' && echo && echo 'Use: qj-agent add <project> <mission>' && echo && tmux list-windows -t qj-desk" C-m
+
+PANE_SHELL=$(tmux split-window -v -t "$PANE_STATUS" -c "$ORCH_DIR" -P -F "#{pane_id}")
+tmux send-keys -t "$PANE_SHELL" "clear && echo 'QJ shell pane'" C-m
+
+tmux select-layout -t "$SESSION:notebook" tiled
+tmux attach -t "$SESSION"
