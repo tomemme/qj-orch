@@ -1,20 +1,51 @@
 # qj-orch
 
-Orchestration tools for managing AI-assisted coding sessions with multiple agents (Claude, Codex) using git worktrees and tmux.
+Orchestration tools for managing AI-assisted coding sessions with multiple agents
+(Claude, Codex) using git worktrees and [herdr](https://github.com/omacom-io/herdr).
+
+Each project gets its own **herdr workspace**; Claude and Codex run in isolated git
+worktrees as herdr-tracked agents (lifecycle states: idle / working / blocked / done).
+
+## Requirements
+
+- [`herdr`](https://github.com/omacom-io/herdr) — terminal workspace manager
+- `jq`, `git`, `nvim`
+- `claude` and `codex` on `PATH` (for the agent panes)
+
+tmux is no longer used.
 
 ## Setup
 
-Add the `bin` directory to your PATH:
+Add `bin` to your `PATH` (and optionally point the folders wherever you like):
 
 ```bash
-export PATH="$HOME/qj-orch/bin:$PATH"
+export QJ_ORCH_DIR="$HOME/qj-orch"            # this checkout (templates + notebook.md)
+export QJ_PROJECTS_DIR="$HOME/ai-projects"    # project repos
+export QJ_WORK_DIR="$HOME/ai-work"            # git worktrees
+export PATH="$QJ_ORCH_DIR/bin:$PATH"
 ```
+
+All three default to `$HOME/<name>` if unset.
+
+Install the herdr agent integrations once (**required** — without them herdr's
+detection of a freshly launched Claude/Codex is unreliable and `qj-agent` will
+report agents as "not ready"):
+
+```bash
+herdr integration install claude
+herdr integration install codex
+```
+
+A herdr server must be running before `qj-agent` / `qj-clean` — start one with
+`herdr`, or run `qj-desk` (it launches herdr if nothing is up).
 
 ## Commands
 
 ### qj-desk
 
-Opens a tmux session for managing multiple projects. Creates a `notebook.md` file in `~/qj-orch` for tracking ideas, decisions, and follow-ups.
+Opens `notebook.md` (ideas, decisions, follow-ups, active maps) in a `qj-desk`
+herdr workspace. If no herdr server is running, it starts one — run `qj-desk`
+again inside it to open the notebook.
 
 ```bash
 qj-desk
@@ -22,25 +53,48 @@ qj-desk
 
 ### qj-agent
 
-Spin up AI coding sessions with isolated git worktrees.
+Spin up AI coding sessions.
 
 ```bash
-# Plan a new idea (wayfinding session)
+# Plan a loose idea (Claude wayfinding session, no worktrees)
 qj-agent plan my-app build a task manager with collaboration
 
-# Start implementation with a clear mission
+# Start implementation with a clear mission (Claude + Codex worktrees, mission dispatched)
 qj-agent start my-app implement JWT auth
 
-# Add a project window to qj-desk
-qj-agent add my-app fix login page
+# Launch the agents but don't send them the mission yet
+qj-agent start my-app --no-dispatch overhaul the parser
 
-# Clone from remote
+# Clone from a remote first
 qj-agent start my-app --from git@github.com:user/app.git fix the API
 ```
 
+By default `start` launches Claude + Codex **and hands them the mission
+immediately** (`plan` launches one Claude and sends `/wayfinder <idea>`). Since
+qj-agent creates the worktree and writes `QJ_TASK.md` itself, it also marks that
+folder trusted so the agents skip their "trust this folder?" dialog — Claude via
+`~/.claude.json`, Codex via a `[projects]` entry in `~/.codex/config.toml`. Codex
+also starts with `--sandbox workspace-write`. **Per-command approval prompts are
+unaffected** — the agents still ask before running shell commands, hitting the
+network, etc.
+
+Flags:
+
+| Flag | Effect |
+|------|--------|
+| `--no-dispatch` | Launch the agents but leave them idle (don't send the mission) |
+| `--no-agents`   | Open panes at the worktrees but don't launch Claude/Codex |
+| `--safe`        | Don't pre-trust the folder or relax Codex's sandbox; agents get their normal first-run prompts |
+| `--from <url>`  | Clone the project from a remote first |
+| `--map <url>`   | Link a wayfinder map into `QJ_TASK.md` (`start` only) |
+
+`plan` creates workspace `qj-plan-<project>`; `start` creates workspace
+`qj-<project>` with a merge pane plus Claude and Codex worktree panes. Running
+`start` again for an existing workspace just focuses it.
+
 ### qj-clean
 
-Clean up worktrees and branches when done with a project.
+Remove worktrees and branches when done, and close the herdr workspaces.
 
 ```bash
 qj-clean my-app
@@ -48,7 +102,13 @@ qj-clean my-app
 
 ## How It Works
 
-- Creates isolated git worktrees for each agent (Codex, Claude)
-- Sets up tmux layouts with panes for each agent plus merge authority
-- Generates `QJ_TASK.md` files with mission context and rules
-- Keeps your main branch clean while agents work on separate branches
+- Each project → one herdr workspace (`qj-<project>` / `qj-plan-<project>`).
+- Claude and Codex work in isolated `git worktree` checkouts on
+  `qj/claude-<project>` and `qj/codex-<project>` branches; your main branch stays clean.
+- `QJ_TASK.md` is rendered into each worktree from `templates/QJ_TASK.md` with the
+  mission, project name, and map URL filled in.
+- Agents are started as herdr-tracked agents, so `herdr agent list`, `herdr agent
+  wait`, and blocked/idle notifications work.
+- `qj-clean` removes the worktrees and branches and closes the `qj-<project>` /
+  `qj-plan-<project>` workspaces. The pre-trust entries it wrote to
+  `~/.claude.json` / `~/.codex/config.toml` are left in place.

@@ -1,108 +1,100 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-PROJECTS_DIR="$HOME/ai-projects"
-AI_WORK_DIR="$HOME/ai-work"
-ORCH_DIR="$HOME/qj-orch"
-TEMPLATE="$ORCH_DIR/templates/QJ_TASK.md"
+source "$(dirname "$(readlink -f "$0")")/../lib/qj-herdr.sh"
 
 usage() {
-  echo "Usage:"
-  echo "  qj-agent plan  <project-name> <loose-idea>"
-  echo "  qj-agent plan  <project-name> --from <url> <loose-idea>"
-  echo "  qj-agent start <project-name> <mission>"
-  echo "  qj-agent start <project-name> --from <url> <mission>"
-  echo "  qj-agent start <project-name> --map <url> <mission>"
-  echo "  qj-agent add   <project-name> <mission>"
-  echo
-  echo "Options:"
-  echo "  --from <url>  Clone from a remote URL (plan or start)"
-  echo "  --map <url>   Link to a wayfinder map (start only)"
-  echo
-  echo "Examples:"
-  echo "  qj-agent plan my-app build a task manager with collaboration"
-  echo "  qj-agent plan my-app --from git@github.com:user/app.git rethink the API"
-  echo "  qj-agent start my-app --map https://github.com/user/app/issues/1 implement JWT auth"
-  echo "  qj-agent start my-app fix login page"
-  echo "  qj-agent add active-waybar-calendar fix hover wrap"
-  echo
-  echo "If the project doesn't exist, 'plan' or 'start' will create it automatically."
-  echo
-  echo "Workflow:"
-  echo "  plan  → Wayfinder session to chart the map (unclear ideas)"
-  echo "  start → Full implementation session (clear missions)"
+  cat <<'EOF'
+Usage:
+  qj-agent plan  <project-name> [--from <url>] <loose-idea>
+  qj-agent start <project-name> [--from <url>] [--map <url>] <mission> [flags]
+
+Options:
+  --from <url>    Clone the project from a remote URL (plan or start)
+  --map  <url>    Link a wayfinder map into QJ_TASK.md (start only)
+  --no-agents     Don't launch Claude/Codex; just open panes at the worktrees
+  --no-dispatch   Launch the agents but don't send them the mission (leave idle)
+  --safe          Don't pre-trust the worktree / don't relax Codex's sandbox;
+                  agents get Claude/Codex's normal first-run prompts
+
+Examples:
+  qj-agent plan  my-app build a task manager with collaboration
+  qj-agent plan  my-app --from git@github.com:user/app.git rethink the API
+  qj-agent start my-app --map https://github.com/user/app/issues/1 implement JWT auth
+  qj-agent start my-app fix login page
+  qj-agent start my-app --no-dispatch overhaul the parser
+
+Notes:
+  - Requires a running herdr server. Start one with `herdr` (or run `qj-desk`).
+  - If the project doesn't exist, plan/start creates it (git init, or clone with --from).
+  - Each project gets its own herdr workspace:
+      plan  -> workspace qj-plan-<project>  (Claude wayfinding session)
+      start -> workspace qj-<project>       (merge pane + Claude/Codex worktree panes)
+  - By default the agents are launched AND handed the mission immediately. Because
+    qj-agent creates the worktree and writes QJ_TASK.md itself, it also marks that
+    folder trusted for Claude (skips the "trust this folder?" dialog only) and starts
+    Codex with --sandbox workspace-write. Per-command approvals still apply.
+    Use --safe to skip all of that, --no-dispatch to launch idle.
+EOF
 }
 
-# Parse arguments
+# --- parse arguments -------------------------------------------------------
 ACTION="${1:-}"
 PROJECT="${2:-}"
 FROM_URL=""
 MAP_URL=""
+NO_AGENTS=0
+NO_DISPATCH=0
+SAFE=0
 MISSION_ARGS=()
 
-if [[ -z "$ACTION" ]] || [[ -z "$PROJECT" ]]; then
+if [[ -z "$ACTION" || -z "$PROJECT" ]]; then
   usage
   exit 1
 fi
-
 shift 2
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --from)
-      if [[ -z "${2:-}" ]]; then
-        echo "Error: --from requires a URL"
-        exit 1
-      fi
-      FROM_URL="$2"
-      shift 2
-      ;;
+      [[ -n "${2:-}" ]] || die "--from requires a URL"
+      FROM_URL="$2"; shift 2 ;;
     --map)
-      if [[ -z "${2:-}" ]]; then
-        echo "Error: --map requires a URL"
-        exit 1
-      fi
-      MAP_URL="$2"
-      shift 2
-      ;;
+      [[ -n "${2:-}" ]] || die "--map requires a URL"
+      MAP_URL="$2"; shift 2 ;;
+    --no-agents)
+      NO_AGENTS=1; shift ;;
+    --no-dispatch|--idle)
+      NO_DISPATCH=1; shift ;;
+    --safe)
+      SAFE=1; shift ;;
+    --dispatch)
+      shift ;;  # now the default; accepted as a no-op
     *)
-      MISSION_ARGS+=("$1")
-      shift
-      ;;
+      MISSION_ARGS+=("$1"); shift ;;
   esac
 done
 
 MISSION="${MISSION_ARGS[*]}"
 
-if { [[ "$ACTION" != "start" ]] && [[ "$ACTION" != "add" ]] && [[ "$ACTION" != "plan" ]]; } || [[ -z "$MISSION" ]]; then
-  usage
-  exit 1
-fi
+case "$ACTION" in
+  plan|start) ;;
+  *) usage; exit 1 ;;
+esac
+[[ -n "$MISSION" ]] || { usage; exit 1; }
+[[ "$ACTION" == "start" || -z "$MAP_URL" ]] || die "--map is only supported with 'start'"
 
-if [[ "$ACTION" == "add" ]] && [[ -n "$FROM_URL" ]]; then
-  echo "Error: --from is only supported with 'plan' or 'start', not 'add'"
-  exit 1
-fi
-
-if [[ "$ACTION" == "add" ]] && [[ -n "$MAP_URL" ]]; then
-  echo "Error: --map is only supported with 'start', not 'add'"
-  exit 1
-fi
-
-if [[ "$ACTION" == "plan" ]] && [[ -n "$MAP_URL" ]]; then
-  echo "Error: --map is only supported with 'start', not 'plan'"
-  exit 1
-fi
+qj_need herdr jq git
+qj_require_herdr
+(( NO_AGENTS )) || qj_warn_integrations claude codex
 
 REPO="$PROJECTS_DIR/$PROJECT"
-CODEX_WT="$AI_WORK_DIR/$PROJECT-codex"
-CLAUDE_WT="$AI_WORK_DIR/$PROJECT-claude"
-SESSION="qj-$PROJECT"
+CODEX_WT="$WORK_DIR/$PROJECT-codex"
+CLAUDE_WT="$WORK_DIR/$PROJECT-claude"
 
-# Ensure base directories exist
-mkdir -p "$PROJECTS_DIR" "$AI_WORK_DIR"
+mkdir -p "$PROJECTS_DIR" "$WORK_DIR"
 
-# Auto-create or clone project if it doesn't exist
+# --- ensure the project repo exists --------------------------------------
 if [[ ! -d "$REPO" ]]; then
   if [[ -n "$FROM_URL" ]]; then
     echo "Cloning from $FROM_URL..."
@@ -116,77 +108,77 @@ if [[ ! -d "$REPO" ]]; then
     git -C "$REPO" commit -m "Initial commit"
   fi
 elif [[ ! -d "$REPO/.git" ]]; then
-  # Folder exists but no git
   if [[ -n "$FROM_URL" ]]; then
-    echo "Error: $REPO already exists. Remove it first to clone from URL."
-    exit 1
-  else
-    echo "Initializing git in existing folder: $REPO"
-    git -C "$REPO" init
-    git -C "$REPO" add -A
-    git -C "$REPO" commit -m "Initial commit" --allow-empty
+    die "$REPO already exists — remove it first to clone from a URL"
   fi
+  echo "Initializing git in existing folder: $REPO"
+  git -C "$REPO" init
+  git -C "$REPO" add -A
+  git -C "$REPO" commit -m "Initial commit" --allow-empty
 fi
 
 cd "$REPO"
 
-# Only update the source remote. Deployment remotes such as Heroku may require
-# separate credentials and should not block or prompt while opening a workspace.
+# Refresh the source remote only. Deployment remotes (Heroku, etc.) may need
+# separate credentials and must not block opening a workspace.
 if git remote get-url origin >/dev/null 2>&1; then
   git fetch origin --prune || true
 fi
 
-# Handle plan action - lightweight wayfinding session (no worktrees needed)
+# ========================================================================
+# plan -- lightweight Claude wayfinding session, no worktrees
+# ========================================================================
 if [[ "$ACTION" == "plan" ]]; then
-  SESSION="qj-plan-$PROJECT"
+  LABEL="qj-plan-$PROJECT"
 
-  tmux has-session -t "$SESSION" 2>/dev/null && {
-    echo "Plan session already exists. Attach with:"
-    echo "  tmux attach -t $SESSION"
+  if [[ -n "$(qj_ws_id "$LABEL")" ]]; then
+    echo "Plan workspace already exists: $LABEL"
+    echo "Focus it in herdr, or run: qj-clean $PROJECT"
     exit 0
-  }
+  fi
 
-  # Update notebook with new planning session
-  NOTEBOOK="$ORCH_DIR/notebook.md"
-  if [[ -f "$NOTEBOOK" ]]; then
-    # Add to Active Maps section if not already there
-    if ! grep -q "- \[$PROJECT\]" "$NOTEBOOK"; then
-      sed -i "/^## Active Maps/a - [$PROJECT] $MISSION" "$NOTEBOOK" 2>/dev/null || true
+  # Record the idea in the notebook's Active Maps section.
+  qj_ensure_notebook
+  if ! grep -q "\- \[$PROJECT\]" "$NOTEBOOK"; then
+    sed -i "/^## Active Maps/a - [$PROJECT] $MISSION" "$NOTEBOOK" 2>/dev/null || true
+  fi
+
+  read -r WS ROOT < <(qj_ws_create "$LABEL" "$REPO")
+
+  qj_run "$ROOT" "clear && printf '\n  WAYFINDER: %s\n  Idea: %s\n\n  Run /wayfinder to chart the map.\n  Skills: /grilling /domain-modeling /research /prototype\n\n  When the map is clear:\n    qj-agent start %s --map <map-url> <mission>\n\n' '$PROJECT' '$MISSION' '$PROJECT'"
+
+  if (( ! NO_AGENTS )); then
+    (( SAFE )) || qj_trust_claude_dir "$REPO"
+    PANE_WF=$(qj_split "$ROOT" right "$REPO")
+    qj_agent_start "wf-$PROJECT" claude "$PANE_WF"
+    if (( ! NO_DISPATCH )); then
+      echo "Dispatching /wayfinder to the wayfinding agent..."
+      qj_dispatch "wf-$PROJECT" "/wayfinder $MISSION"
     fi
   fi
 
-  # Create lightweight 2-pane layout for wayfinding
-  PANE_CLAUDE=$(tmux new-session -d -s "$SESSION" -n "wayfind" -c "$REPO" -P -F "#{pane_id}")
-
-  # Pane 1: Claude wayfinding session
-  tmux send-keys -t "$PANE_CLAUDE" "clear && echo -e '\n  WAYFINDER SESSION: $PROJECT\n  Idea: $MISSION\n\n  Run: /wayfinder to chart the map\n  Skills: /grilling /domain-modeling /research /prototype\n\n  When the map is clear, exit and run:\n    qj-agent start $PROJECT --map <map-url> <mission>\n'" C-m
-
-  # Pane 2: Notes pane for tracking
-  PANE_NOTES=$(tmux split-window -h -t "$PANE_CLAUDE" -c "$REPO" -P -F "#{pane_id}" -l 40%)
-  tmux send-keys -t "$PANE_NOTES" "clear && echo -e 'Notes pane - track decisions here\n\nIdea: $MISSION\n'" C-m
-
-  # Focus on Claude pane
-  tmux select-pane -t "$PANE_CLAUDE"
-
-  echo "Wayfinding session ready. Attach with:"
-  echo "  tmux attach -t $SESSION"
-  echo
-  echo "In the session, run /wayfinder to chart your idea."
+  qj_ws_focus "$WS"
+  echo "Wayfinding workspace ready: $LABEL"
   exit 0
 fi
 
-# --- Implementation phase (start/add) ---
+# ========================================================================
+# start -- full implementation session with isolated worktrees
+# ========================================================================
+LABEL="qj-$PROJECT"
 
-# Create isolated branches/worktrees if they do not already exist.
-if [[ ! -d "$CODEX_WT" ]]; then
-  git worktree add -b "qj/codex-$PROJECT" "$CODEX_WT"
+if [[ -n "$(qj_ws_id "$LABEL")" ]]; then
+  WS="$(qj_ws_id "$LABEL")"
+  qj_ws_focus "$WS"
+  echo "Workspace already exists: $LABEL (focused)"
+  exit 0
 fi
 
-if [[ ! -d "$CLAUDE_WT" ]]; then
-  git worktree add -b "qj/claude-$PROJECT" "$CLAUDE_WT"
-fi
+# Isolated branches / worktrees.
+[[ -d "$CODEX_WT"  ]] || git worktree add -b "qj/codex-$PROJECT"  "$CODEX_WT"
+[[ -d "$CLAUDE_WT" ]] || git worktree add -b "qj/claude-$PROJECT" "$CLAUDE_WT"
 
-# Create task files.
+# Render QJ_TASK.md into each worktree from the template.
 MAP_DISPLAY="${MAP_URL:-_No map linked. Run qj-agent plan first for complex work._}"
 for WT in "$CODEX_WT" "$CLAUDE_WT"; do
   while IFS= read -r LINE || [[ -n "$LINE" ]]; do
@@ -194,71 +186,42 @@ for WT in "$CODEX_WT" "$CLAUDE_WT"; do
       '{{MISSION}}') printf '%s\n' "$MISSION" ;;
       '{{PROJECT}}') printf '%s\n' "$PROJECT" ;;
       '{{MAP_URL}}') printf '%s\n' "$MAP_DISPLAY" ;;
-      *) printf '%s\n' "$LINE" ;;
+      *)             printf '%s\n' "$LINE" ;;
     esac
   done < "$TEMPLATE" > "$WT/QJ_TASK.md"
 done
 
-# Start tmux layout.
-if [[ "$ACTION" == "add" ]]; then
-  DESK_SESSION="qj-desk"
-
-  if ! tmux has-session -t "$DESK_SESSION" 2>/dev/null; then
-    echo "qj-desk is not running. Start it first with:"
-    echo "  qj-desk"
-    exit 1
-  fi
-
-  WINDOW="$PROJECT"
-
-  if tmux list-windows -t "$DESK_SESSION" -F "#{window_name}" | grep -qx "$WINDOW"; then
-    echo "Window already exists in qj-desk: $WINDOW"
-    echo "Attach with:"
-    echo "  tmux attach -t qj-desk"
-    exit 0
-  fi
-
-  PANE_MAIN=$(tmux new-window -t "$DESK_SESSION" -n "$WINDOW" -c "$REPO" -P -F "#{pane_id}")
-
-else
-  tmux has-session -t "$SESSION" 2>/dev/null && {
-    echo "Session already exists. Attach with:"
-    echo "tmux attach -t $SESSION"
-    exit 0
-  }
-
-  WINDOW="qj"
-  PANE_MAIN=$(tmux new-session -d -s "$SESSION" -n "$WINDOW" -c "$REPO" -P -F "#{pane_id}")
-fi
+read -r WS ROOT < <(qj_ws_create "$LABEL" "$REPO")
 
 # Pane 1: main repo / merge authority
-tmux send-keys -t "$PANE_MAIN" "cd '$REPO' && clear && git status && echo 'Main repo / merge authority'" C-m
+qj_run "$ROOT" "clear && git status && echo && sed -n '1,12p' '$CLAUDE_WT/QJ_TASK.md' && echo && echo 'main repo / merge authority'"
 
-# Pane 2: Codex worktree
-PANE_CODEX=$(tmux split-window -h -t "$PANE_MAIN" -c "$CODEX_WT" -P -F "#{pane_id}")
-tmux send-keys -t "$PANE_CODEX" "cd '$CODEX_WT' && clear && echo 'Codex worktree' && cat QJ_TASK.md && echo && echo 'Start Codex with: codex'" C-m
+# Pane 2: Claude worktree   Pane 3: Codex worktree
+PANE_CLAUDE=$(qj_split "$ROOT" right "$CLAUDE_WT")
+PANE_CODEX=$(qj_split "$PANE_CLAUDE" down "$CODEX_WT")
 
-# Pane 3: Claude worktree
-PANE_CLAUDE=$(tmux split-window -v -t "$PANE_CODEX" -c "$CLAUDE_WT" -P -F "#{pane_id}")
-tmux send-keys -t "$PANE_CLAUDE" "cd '$CLAUDE_WT' && clear && echo 'Claude worktree' && cat QJ_TASK.md && echo && echo 'Start Claude with: claude'" C-m
-
-# Pane 4: tests/server pane
-PANE_TESTS=$(tmux split-window -v -t "$PANE_MAIN" -c "$REPO" -P -F "#{pane_id}")
-tmux send-keys -t "$PANE_TESTS" "cd '$REPO' && clear && echo 'Tests/server pane. Run your dev server or tests here.'" C-m
-
-# Pane 5: local notes/checklist
-PANE_NOTES=$(tmux split-window -v -t "$PANE_TESTS" -c "$REPO" -P -F "#{pane_id}")
-tmux send-keys -t "$PANE_NOTES" "cd '$REPO' && clear && nvim QJ_TASK.md" C-m
-
-if [[ "$ACTION" == "add" ]]; then
-  tmux select-layout -t "$DESK_SESSION:$WINDOW" tiled
-  echo "Added project window to qj-desk:"
-  echo "  $PROJECT"
-  echo
-  echo "Attach with:"
-  echo "  tmux attach -t qj-desk"
+if (( NO_AGENTS )); then
+  qj_run "$PANE_CLAUDE" "clear && cat QJ_TASK.md && echo && echo 'Start Claude with: claude'"
+  qj_run "$PANE_CODEX"  "clear && cat QJ_TASK.md && echo && echo 'Start Codex with: codex'"
 else
-  tmux select-layout -t "$SESSION:$WINDOW" tiled
-  echo "Ready. Attach with:"
-  echo "  tmux attach -t $SESSION"
+  if (( ! SAFE )); then
+    qj_trust_claude_dir "$CLAUDE_WT" "$REPO"
+    qj_trust_codex_repo "$REPO"
+    CODEX_ARGS=(--sandbox workspace-write)
+  else
+    CODEX_ARGS=()
+  fi
+  qj_agent_start "claude-$PROJECT" claude "$PANE_CLAUDE"
+  qj_agent_start "codex-$PROJECT"  codex  "$PANE_CODEX" "${CODEX_ARGS[@]}"
+  if (( ! NO_DISPATCH )); then
+    echo "Dispatching mission to agents..."
+    qj_dispatch "claude-$PROJECT" "$MISSION"
+    qj_dispatch "codex-$PROJECT"  "$MISSION"
+  fi
 fi
+
+qj_ws_focus "$WS"
+echo "Ready: workspace $LABEL"
+echo "  main:   $REPO"
+echo "  claude: $CLAUDE_WT   (branch qj/claude-$PROJECT)"
+echo "  codex:  $CODEX_WT   (branch qj/codex-$PROJECT)"
