@@ -11,6 +11,8 @@ worktrees as herdr-tracked agents (lifecycle states: idle / working / blocked / 
 - [`herdr`](https://github.com/omacom-io/herdr) — terminal workspace manager
 - `jq`, `git`, `nvim`
 - `claude` and `codex` on `PATH` (for the agent panes)
+- For repository recon: QEMU/KVM, libvirt, `virt-install`, `dnsmasq`, UEFI
+  firmware, and `virt-viewer` (see [recon setup](docs/recon.md))
 
 tmux is no longer used.
 
@@ -44,25 +46,33 @@ A herdr server must be running before `qj-agent` / `qj-clean` — start one with
 ### qj-desk
 
 Opens `notebook.md` (ideas, decisions, follow-ups, active maps) in a `qj-desk`
-herdr workspace. If no herdr server is running, it starts one — run `qj-desk`
-again inside it to open the notebook.
+herdr workspace. If no herdr server is running, it starts one and preserves a
+pending recon request while the server comes up.
 
 ```bash
 qj-desk
 ```
 
-### Repository recon (VM-backed, initial implementation)
+### Repository recon (VM-backed)
 
 ```bash
-qj-vm setup                         # Create the dedicated Omarchy installer VM
-qj-desk recon owner/repo            # Open desk, then choose Claude or Codex
+qj-vm setup --iso <omarchy.iso>     # Create the dedicated Omarchy VM
+qj-vm login claude                   # Authenticate inside the guest (or codex)
+qj-desk recon owner/repo             # Open desk, then choose Claude or Codex
 qj-desk resume <review-id>           # Retry with the same agent and saved evidence
 ```
 
-Repositories are collected inside the VM and reviewed as bounded static evidence.
-The host receives a report linked from the notebook. No project installation or
-execution is part of recon. Complete VM installation, account login, and live
-isolation verification before first untrusted use.
+Repositories are collected inside an Omarchy VM and reviewed as bounded static
+evidence. The host receives a report linked from the notebook. No project
+installation or execution is part of recon. The first setup requires installing
+Omarchy on the VM's new 40 GiB virtual disk, running the guest bootstrap, and
+authenticating the selected agent inside the guest. Complete live isolation
+verification before first untrusted use.
+
+The VM has no host-folder sharing, clipboard integration, SSH-agent forwarding,
+physical-disk passthrough, or Docker socket access. Recon pins a public GitHub
+commit, supplies bounded source evidence to the selected agent, and records
+skipped coverage. It does not claim runtime safety or run the target project.
 
 See [setup, boundaries, and lifecycle](docs/recon.md), the
 [QJ persona](persona/qj.md), and [optional PC-specs template](persona/pc-specs.example.md).
