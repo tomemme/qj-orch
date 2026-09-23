@@ -3,3 +3,8 @@ logs/
 
 # Personal notebook (created by qj-desk)
 notebook.md
+
+# Recon runtime artifacts and local machine profile
+__pycache__/
+*.pyc
+persona/pc-specs.md

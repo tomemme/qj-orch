@@ -1,0 +1,28 @@
+<filter name='qj-recon' chain='root'>
+  <rule action='drop' direction='inout' priority='-1000'><mac protocolid='vlan'/></rule>
+  <rule action='drop' direction='inout' priority='-1000'><mac protocolid='0x88a8'/></rule>
+  <rule action='drop' direction='inout' priority='-1000'><mac protocolid='ipv6'/></rule>
+  <filterref filter='clean-traffic'>
+    <parameter name='IP' value='192.168.231.2'/>
+  </filterref>
+  <rule action='accept' direction='inout' priority='100'><arp/></rule>
+  <rule action='accept' direction='out' priority='110'><udp srcportstart='68' dstportstart='67'/></rule>
+  <rule action='accept' direction='in' priority='110'><udp srcipaddr='192.168.231.1' srcportstart='67' dstportstart='68'/></rule>
+  <rule action='accept' direction='out' priority='120'><udp dstipaddr='192.168.231.1' dstportstart='53'/></rule>
+  <rule action='accept' direction='out' priority='120'><tcp dstipaddr='192.168.231.1' dstportstart='53'/></rule>
+  <rule action='accept' direction='in' priority='130'><tcp srcipaddr='192.168.231.1' dstportstart='22'/></rule>
+  <rule action='accept' direction='inout' priority='140'><all state='ESTABLISHED'/></rule>
+  <rule action='drop' direction='out' priority='200'><all dstipaddr='0.0.0.0' dstipmask='8'/></rule>
+  <rule action='drop' direction='out' priority='200'><all dstipaddr='10.0.0.0' dstipmask='8'/></rule>
+  <rule action='drop' direction='out' priority='200'><all dstipaddr='100.64.0.0' dstipmask='10'/></rule>
+  <rule action='drop' direction='out' priority='200'><all dstipaddr='127.0.0.0' dstipmask='8'/></rule>
+  <rule action='drop' direction='out' priority='200'><all dstipaddr='169.254.0.0' dstipmask='16'/></rule>
+  <rule action='drop' direction='out' priority='200'><all dstipaddr='172.16.0.0' dstipmask='12'/></rule>
+  <rule action='drop' direction='out' priority='200'><all dstipaddr='192.168.0.0' dstipmask='16'/></rule>
+  <rule action='drop' direction='out' priority='200'><all dstipaddr='224.0.0.0' dstipmask='4'/></rule>
+  <rule action='drop' direction='out' priority='200'><all dstipaddr='240.0.0.0' dstipmask='4'/></rule>
+  <rule action='accept' direction='out' priority='300'><tcp dstportstart='80'/></rule>
+  <rule action='accept' direction='out' priority='300'><tcp dstportstart='443'/></rule>
+  <rule action='drop' direction='inout' priority='900'><all/></rule>
+  <rule action='drop' direction='inout' priority='900'><all-ipv6/></rule>
+</filter>

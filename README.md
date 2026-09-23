@@ -51,6 +51,22 @@ again inside it to open the notebook.
 qj-desk
 ```
 
+### Repository recon (VM-backed, initial implementation)
+
+```bash
+qj-vm setup                         # Create the dedicated Omarchy installer VM
+qj-desk recon owner/repo            # Open desk, then choose Claude or Codex
+qj-desk resume <review-id>           # Retry with the same agent and saved evidence
+```
+
+Repositories are collected inside the VM and reviewed as bounded static evidence.
+The host receives a report linked from the notebook. No project installation or
+execution is part of recon. Complete VM installation, account login, and live
+isolation verification before first untrusted use.
+
+See [setup, boundaries, and lifecycle](docs/recon.md), the
+[QJ persona](persona/qj.md), and [optional PC-specs template](persona/pc-specs.example.md).
+
 ### qj-agent
 
 Spin up AI coding sessions.

@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+set -euo pipefail
+ROOT="$(dirname "$(readlink -f "$0")")/.."
+case "${1:-}" in
+  setup) shift; exec python3 "$ROOT/lib/recon/provision.py" "$@" ;;
+  status|start|shutdown|login|checkpoint|reset) exec python3 "$ROOT/lib/recon/host.py" "$@" ;;
+  *) echo 'Usage: qj-vm setup|status|start|shutdown|checkpoint|reset|login <claude|codex>'; exit 1 ;;
+esac

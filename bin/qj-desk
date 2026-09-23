@@ -1,29 +1,65 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-source "$(dirname "$(readlink -f "$0")")/../lib/qj-herdr.sh"
+BIN="$(dirname "$(readlink -f "$0")")"
+source "$BIN/../lib/qj-herdr.sh"
+# Resolve this checkout when QJ_ORCH_DIR is not configured.
+if [[ -z "${QJ_ORCH_DIR:-}" ]]; then
+  ORCH_DIR="$(readlink -f "$BIN/..")"
+  NOTEBOOK="$ORCH_DIR/notebook.md"
+fi
+export QJ_ORCH_DIR="$ORCH_DIR"
 
-qj_need herdr
-
-# Personal notebook for ideas, decisions, and follow-ups.
+case "${1:-}" in
+  '') ;;
+  recon)
+    [[ $# == 2 ]] || die 'Usage: qj-desk recon <owner/repo|github-url>'
+    RUN_ID=$("$BIN/qj-recon" new "$2") ;;
+  resume)
+    [[ $# == 2 && "$2" =~ ^[a-f0-9]{16}$ ]] || die 'Usage: qj-desk resume <review-id>'
+    RUN_ID="$2" ;;
+  -h|--help)
+    echo 'Usage: qj-desk [recon <owner/repo|github-url> | resume <review-id>]'
+    exit 0 ;;
+  *) die 'Usage: qj-desk [recon <owner/repo|github-url> | resume <review-id>]' ;;
+esac
+qj_need herdr jq nvim
 qj_ensure_notebook
 
-# No herdr server yet -> launch one. Re-run `qj-desk` from inside it to open
-# the notebook workspace.
+# Preserve recon request while bringing up a server. A short-lived helper waits
+# for the server, then reopens this exact request; no duplicate intake or agent.
 if ! qj_herdr_up; then
-  echo "Starting herdr... run 'qj-desk' again inside it to open the notebook."
+  if [[ -n "${RUN_ID:-}" ]]; then
+    (
+      for ((i=0; i<60; i++)); do
+        if qj_herdr_up; then
+          "$BIN/qj-desk" resume "$RUN_ID"
+          exit
+        fi
+        sleep 1
+      done
+      warn "Desk startup timed out. Resume with: qj-desk resume $RUN_ID"
+    ) </dev/null >"${TMPDIR:-/tmp}/qj-desk-startup-$$.log" 2>&1 &
+  fi
   exec herdr
 fi
 
-qj_need jq nvim
-
 WS="$(qj_ws_id qj-desk)"
-if [[ -n "$WS" ]]; then
-  qj_ws_focus "$WS"
-  echo "Focused workspace: qj-desk"
-else
+if [[ -z "$WS" ]]; then
   read -r WS ROOT < <(qj_ws_create qj-desk "$ORCH_DIR")
-  qj_run "$ROOT" "nvim '$NOTEBOOK'"
-  qj_ws_focus "$WS"
-  echo "Opened workspace: qj-desk ($NOTEBOOK)"
+  printf -v CMD 'nvim -u NONE -i NONE -- %q' "$NOTEBOOK"
+  qj_run "$ROOT" "$CMD"
+fi
+qj_ws_focus "$WS"
+if [[ -n "${RUN_ID:-}" ]]; then
+  LABEL="qj-recon-$RUN_ID"
+  REVIEW_WS="$(qj_ws_id "$LABEL")"
+  if [[ -n "$REVIEW_WS" ]]; then
+    qj_ws_focus "$REVIEW_WS"
+  else
+    read -r REVIEW_WS PANE < <(qj_ws_create "$LABEL" "$ORCH_DIR")
+    printf -v CMD '%q review %q' "$BIN/qj-recon" "$RUN_ID"
+    qj_run "$PANE" "$CMD"
+    qj_ws_focus "$REVIEW_WS"
+  fi
 fi
